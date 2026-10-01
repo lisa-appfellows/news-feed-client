@@ -116,12 +116,111 @@ final class NewsFeedClientLiveTests: XCTestCase {
         XCTAssertEqual(page, expected)
     }
 
+    func testLiveAPIStatusFromErrorBody() async {
+        StubURLProtocol.handler = { request in
+            let body = """
+            {
+              "status": "error",
+              "code": "parametersMissing",
+              "message": "Required parameters are missing."
+            }
+            """
+    
+            return (
+                HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 400,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!,
+                Data(body.utf8)
+            )
+        }
+
+        let client = NewsFeedClient.live(apiKey: "key", session: Self.stubSession())
+
+        do {
+            _ = try await client.topHeadlines(.init(country: "us"))
+            XCTFail("Expected apiStatus")
+        } catch NewsFeedError.apiStatus(_, let message) {
+            XCTAssertEqual(message, "Required parameters are missing.")
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testLiveDecodingFailureOnOkResponse() async {
+        StubURLProtocol.handler = { request in
+            (
+                HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!,
+                Data("not-json".utf8)
+            )
+        }
+
+        let client = NewsFeedClient.live(apiKey: "key", session: Self.stubSession())
+
+        do {
+            _ = try await client.topHeadlines(.init(country: "us"))
+            XCTFail("Expected decoding")
+        } catch NewsFeedError.decoding {
+            // expected
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testLiveNonJSONErrorUsesHTTPStatus() async {
+        StubURLProtocol.handler = { request in
+            (
+                HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 500,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!,
+                Data("Internal Server Error".utf8)
+            )
+        }
+
+        let client = NewsFeedClient.live(apiKey: "key", session: Self.stubSession())
+
+        do {
+            _ = try await client.topHeadlines(.init(country: "us"))
+            XCTFail("Expected apiStatus")
+        } catch NewsFeedError.apiStatus(let code, _) {
+            XCTAssertEqual(code, 500)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testLiveTransportFailure() async {
+        StubURLProtocol.handler = { _ in
+            throw URLError(.notConnectedToInternet)
+        }
+
+        let client = NewsFeedClient.live(apiKey: "key", session: Self.stubSession())
+
+        do {
+            _ = try await client.topHeadlines(.init(country: "us"))
+            XCTFail("Expected transport")
+        } catch NewsFeedError.transport {
+            // expected
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     private static func stubSession() -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [StubURLProtocol.self]
         return URLSession(configuration: config)
     }
-
 }
 
 // MARK: - StubURLProtocol
